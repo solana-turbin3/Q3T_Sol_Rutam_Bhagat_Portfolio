@@ -122,4 +122,38 @@ describe("vault", () => {
       initialVaultBalance - withdrawAmount.toNumber()
     );
   });
+
+  it("Closes the vault account", async () => {
+    const initialUserBalance = await provider.connection.getBalance(
+      user.publicKey
+    );
+    const initialVaultBalance = await provider.connection.getBalance(vaultPda);
+
+    const tx = await program.methods
+      .closeAccount()
+      .accounts({
+        user: user.publicKey,
+      })
+      .rpc();
+
+    console.log("Close account transaction signature", tx);
+
+    const finalUserBalance = await provider.connection.getBalance(
+      user.publicKey
+    );
+    const finalVaultBalance = await provider.connection.getBalance(vaultPda);
+
+    expect(finalUserBalance).to.be.above(
+      initialUserBalance + initialVaultBalance - 10000
+    ); // Allow for fees
+    expect(finalVaultBalance).to.equal(0);
+
+    // Verify that the vault state account is closed
+    try {
+      await program.account.vaultState.fetch(vaultStatePda);
+      throw new Error("Vault state account should be closed");
+    } catch (error) {
+      expect(error.message).to.include("Account does not exist");
+    }
+  });
 });
