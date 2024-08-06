@@ -14,8 +14,14 @@ pub mod vault {
         Ok(())
     }
 
-    pub fn deposit(ctx: Context<Deposit>, amount: u64) -> Result<()> {
+    pub fn deposit(ctx: Context<Payment>, amount: u64) -> Result<()> {
         ctx.accounts.deposit(amount)?;
+        Ok(())
+    }
+
+    // TODO: Withdraw funds from vault
+    pub fn withdraw(ctx: Context<Payment>, amount: u64) -> Result<()> {
+        ctx.accounts.withdraw(amount)?;
         Ok(())
     }
 }
@@ -49,7 +55,7 @@ impl<'info> Initialize<'info> {
 }
 
 #[derive(Accounts)]
-pub struct Deposit<'info> {
+pub struct Payment<'info> {
     #[account(mut)]
     pub user: Signer<'info>,
     #[account(
@@ -66,7 +72,7 @@ pub struct Deposit<'info> {
     pub system_program: Program<'info, System>,
 }
 
-impl<'info> Deposit<'info> {
+impl<'info> Payment<'info> {
     pub fn deposit(&mut self, amount: u64) -> Result<()> {
         let cpi_program = self.system_program.to_account_info();
 
@@ -77,6 +83,23 @@ impl<'info> Deposit<'info> {
 
         let cpi_ctx = CpiContext::new(cpi_program, cpi_accounts);
 
+        transfer(cpi_ctx, amount)?;
+        Ok(())
+    }
+
+    pub fn withdraw(&mut self, amount: u64) -> Result<()> {
+        let cpi_program = self.system_program.to_account_info();
+
+        let cpi_accounts = Transfer {
+            from: self.vault.to_account_info(),
+            to: self.user.to_account_info(),
+        };
+
+        let vault_bump = self.vault_state.vault_bump;
+        let vault_state_key = self.vault_state.key();
+        let signer_seeds: &[&[&[u8]]] = &[&[b"vault", vault_state_key.as_ref(), &[vault_bump]]];
+
+        let cpi_ctx = CpiContext::new_with_signer(cpi_program, cpi_accounts, signer_seeds);
         transfer(cpi_ctx, amount)?;
         Ok(())
     }
