@@ -9,8 +9,9 @@ declare_id!("GuEoP5k8Ckmxf7J96n86QQaAsLuvxwvhLaNVbcGxvRBx");
 pub mod vault {
     use super::*;
 
-    pub fn initialize(ctx: Context<Initialize>) -> Result<()> {
-        ctx.accounts.initialize(&ctx.bumps)?;
+    pub fn initialize(ctx: Context<Initialize>, lock_duration: Option<i64>) -> Result<()> {
+        ctx.accounts
+            .initialize(&ctx.bumps, lock_duration.unwrap_or(0))?;
         Ok(())
     }
 
@@ -51,9 +52,14 @@ pub struct Initialize<'info> {
 }
 
 impl<'info> Initialize<'info> {
-    pub fn initialize(&mut self, bumps: &InitializeBumps) -> Result<()> {
+    pub fn initialize(&mut self, bumps: &InitializeBumps, lock_duration: i64) -> Result<()> {
         self.vault_state.vault_bump = bumps.vault;
         self.vault_state.state_bump = bumps.vault_state;
+        self.vault_state.unlock_time = if lock_duration > 0 {
+            Clock::get()?.unix_timestamp + lock_duration
+        } else {
+            0 // No lock
+        };
         Ok(())
     }
 }
@@ -92,6 +98,11 @@ impl<'info> Payment<'info> {
     }
 
     pub fn withdraw(&mut self, amount: u64) -> Result<()> {
+        let current_time = Clock::get()?.unix_timestamp;
+        if current_time < self.vault_state.unlock_time {
+            return Err(VaultError::VaultLocked.into());
+        }
+
         let vault_balance = self.vault.lamports();
         if vault_balance < amount {
             return Err(ProgramError::InsufficientFunds.into());
@@ -157,8 +168,15 @@ impl<'info> CloseAccount<'info> {
 pub struct VaultState {
     pub vault_bump: u8,
     pub state_bump: u8,
+    pub unlock_time: i64,
 }
 
 impl Space for VaultState {
-    const INIT_SPACE: usize = 8 + 1 + 1;
+    const INIT_SPACE: usize = 8 + 1 + 1 + 8;
+}
+
+#[error_code]
+pub enum VaultError {
+    #[msg("The vault is locked")]
+    VaultLocked,
 }

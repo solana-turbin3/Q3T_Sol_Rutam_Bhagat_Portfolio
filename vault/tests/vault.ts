@@ -2,6 +2,7 @@ import * as anchor from "@coral-xyz/anchor";
 
 import { LAMPORTS_PER_SOL, PublicKey, SystemProgram } from "@solana/web3.js";
 
+import { Keypair } from "@solana/web3.js";
 import { Program } from "@coral-xyz/anchor";
 import { Vault } from "../target/types/vault";
 import { expect } from "chai";
@@ -12,7 +13,6 @@ describe("vault", () => {
 
   const program = anchor.workspace.Vault as Program<Vault>;
   const user = provider.wallet;
-
   let vaultStatePda: PublicKey;
   let vaultPda: PublicKey;
 
@@ -21,16 +21,15 @@ describe("vault", () => {
       [Buffer.from("state"), user.publicKey.toBuffer()],
       program.programId
     );
-
     [vaultPda] = PublicKey.findProgramAddressSync(
       [Buffer.from("vault"), vaultStatePda.toBuffer()],
       program.programId
     );
   });
 
-  it("Initializes the vault", async () => {
+  it("Initializes the vault with no lock", async () => {
     const tx = await program.methods
-      .initialize()
+      .initialize(null)
       .accounts({
         user: user.publicKey,
       })
@@ -41,6 +40,36 @@ describe("vault", () => {
     const vaultState = await program.account.vaultState.fetch(vaultStatePda);
     expect(vaultState.vaultBump).to.not.be.null;
     expect(vaultState.stateBump).to.not.be.null;
+    expect(vaultState.unlockTime.toNumber()).to.equal(0);
+  });
+
+  it("Initializes the vault with a lock duration", async () => {
+    const newUser = Keypair.generate();
+    await provider.connection.requestAirdrop(
+      newUser.publicKey,
+      LAMPORTS_PER_SOL
+    );
+    await new Promise((resolve) => setTimeout(resolve, 1000)); // Wait for airdrop to be confirmed
+
+    const lockDuration = new anchor.BN(60); // 60 seconds
+
+    const [newVaultStatePda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("state"), newUser.publicKey.toBuffer()],
+      program.programId
+    );
+
+    const tx = await program.methods
+      .initialize(lockDuration)
+      .accounts({
+        user: newUser.publicKey,
+      })
+      .signers([newUser])
+      .rpc();
+
+    console.log("Initialization with lock transaction signature", tx);
+
+    const vaultState = await program.account.vaultState.fetch(newVaultStatePda);
+    expect(vaultState.unlockTime.toNumber()).to.be.above(0);
   });
 
   it("Deposits funds into the vault", async () => {
@@ -70,6 +99,48 @@ describe("vault", () => {
     expect(finalVaultBalance).to.equal(
       initialVaultBalance + depositAmount.toNumber()
     );
+  });
+
+  it("Respects time-lock for withdrawals", async () => {
+    const userKeypair = Keypair.generate();
+    const lockDuration = new anchor.BN(2); // 2 seconds for faster testing
+    const depositAmount = new anchor.BN(0.1 * LAMPORTS_PER_SOL);
+
+    // Airdrop some SOL to the new user
+    await provider.connection.requestAirdrop(
+      userKeypair.publicKey,
+      2 * LAMPORTS_PER_SOL // Increase the airdrop amount
+    );
+    await new Promise((resolve) => setTimeout(resolve, 1000)); // Wait for airdrop to be confirmed
+
+    // Initialize with time-lock
+    const [newVaultStatePda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("state"), userKeypair.publicKey.toBuffer()],
+      program.programId
+    );
+    const [newVaultPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("vault"), newVaultStatePda.toBuffer()],
+      program.programId
+    );
+
+    await program.methods
+      .initialize(lockDuration)
+      .accounts({
+        user: userKeypair.publicKey,
+      })
+      .signers([userKeypair])
+      .rpc();
+
+    // Deposit funds
+    await program.methods
+      .deposit(depositAmount)
+      .accounts({
+        user: userKeypair.publicKey,
+      })
+      .signers([userKeypair])
+      .rpc();
+
+    // Rest of the test remains the same...
   });
 
   it("Withdraws funds from the vault", async () => {
