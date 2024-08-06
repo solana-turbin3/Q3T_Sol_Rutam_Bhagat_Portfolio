@@ -88,6 +88,11 @@ impl<'info> Payment<'info> {
     }
 
     pub fn withdraw(&mut self, amount: u64) -> Result<()> {
+        let vault_balance = self.vault.lamports();
+        if vault_balance < amount {
+            return Err(ProgramError::InsufficientFunds.into());
+        }
+
         let cpi_program = self.system_program.to_account_info();
 
         let cpi_accounts = Transfer {
